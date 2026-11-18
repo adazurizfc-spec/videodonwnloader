@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Downloader</title>
+<style>
+  :root{--g:#5cb300;--bg:#f6f6f6;--tx:#111;--mut:#777;--card:#fff;--bd:#e3e3e3}
+  @media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--tx:#f2f2f2;--mut:#9a9a9a;--card:#2a2a2d;--bd:#3a3a3d}}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx)}
+  .bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:16px 20px}
+  .paste{background:var(--g);color:#fff;border:0;border-radius:4px;padding:14px 26px;font-size:17px;cursor:pointer}
+  .paste:disabled{opacity:.6;cursor:wait}
+  .opt{color:var(--mut);font-size:15px}
+  select{font-size:15px;padding:8px;border-radius:6px;border:1px solid var(--bd);background:var(--card);color:var(--tx)}
+  .hero{text-align:center;padding:50px 20px 30px}
+  .hero small{color:var(--mut);font-size:16px}
+  .hero h1{font-weight:400;font-size:clamp(22px,4vw,38px);margin:8px 0}
+  .box{max-width:900px;margin:0 auto 20px;padding:0 20px}
+  .url{display:flex;gap:10px}
+  .url input{flex:1;font-size:16px;padding:14px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx)}
+  .item{display:flex;gap:14px;align-items:center;background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:12px;margin-top:12px}
+  .item img{width:120px;height:68px;object-fit:cover;border-radius:6px;background:#ccc}
+  .info{flex:1;min-width:0}
+  .info b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .info span{color:var(--mut);font-size:13px}
+  .prog{height:6px;background:var(--bd);border-radius:3px;margin-top:8px;overflow:hidden}
+  .prog i{display:block;height:100%;width:0;background:var(--g);transition:width .3s}
+  .dl{background:var(--g);color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-size:15px}
+  .err{color:#d33;font-size:14px;margin-top:10px}
+  .note{color:var(--mut);font-size:12px;text-align:center;margin:30px 20px}
+</style>
+</head>
+<body>
+<div class="bar">
+  <button class="paste" id="paste">Colar link</button>
+  <span class="opt">Transferir <select id="kind"><option value="video">Vídeo</option><option value="audio">Áudio (MP3)</option></select></span>
+  <span class="opt">Qualidade <select id="q"><option value="">Ótima</option><option value="2160">4K</option><option value="1440">1440p</option><option value="1080">1080p</option><option value="720">720p</option><option value="480">480p</option></select></span>
+</div>
+<div class="hero"><small>Cole o link de qualquer vídeo</small><h1>Clique em “Colar link” e comece a transferir</h1></div>
+<div class="box">
+  <div class="url"><input id="url" placeholder="https://..." autocomplete="off"><button class="paste" id="go">Baixar</button></div>
+  <div class="err" id="err"></div>
+  <div id="list"></div>
+</div>
+<p class="note">Use apenas com conteúdo que você tem direito de baixar. Arquivos ficam no servidor por 30 minutos.</p>
+<script>
+const $=id=>document.getElementById(id);
+$('paste').onclick=async()=>{try{$('url').value=await navigator.clipboard.readText();start()}catch{$('url').focus()}};
+$('go').onclick=start;
+$('url').addEventListener('keydown',e=>{if(e.key==='Enter')start()});
+
+async function api(path,body){
+  const r=await fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:undefined);
+  const j=await r.json();
+  if(!r.ok)throw new Error(j.error||'Erro');
+  return j;
+}
+function fmt(s){if(!s)return'';const m=Math.floor(s/60),h=Math.floor(m/60);return(h?h+':'+String(m%60).padStart(2,'0'):m)+':'+String(Math.floor(s%60)).padStart(2,'0')}
+
+async function start(){
+  const url=$('url').value.trim();$('err').textContent='';
+  if(!url)return;
+  $('go').disabled=$('paste').disabled=true;
+  try{
+    const info=await api('/api/info',{url});
+    const {id}=await api('/api/jobs',{url,title:info.title,quality:$('q').value,kind:$('kind').value});
+    const el=document.createElement('div');el.className='item';
+    el.innerHTML=`<img src="${info.thumbnail||''}" alt=""><div class="info"><b></b><span>${[info.uploader,fmt(info.duration)].filter(Boolean).join(' · ')}</span><div class="prog"><i></i></div></div><span class="st">0%</span>`;
+    el.querySelector('b').textContent=info.title;
+    $('list').prepend(el);$('url').value='';
+    poll(id,el);
+  }catch(e){$('err').textContent=e.message}
+  $('go').disabled=$('paste').disabled=false;
+}
+function poll(id,el){
+  const t=setInterval(async()=>{
+    try{
+      const j=await api('/api/jobs/'+id);
+      el.querySelector('i').style.width=j.progress+'%';
+      el.querySelector('.st').textContent=Math.round(j.progress)+'%';
+      if(j.status==='done'){
+        clearInterval(t);
+        el.querySelector('.st').outerHTML=`<a class="dl" href="/api/jobs/${id}/file">Salvar</a>`;
+      }else if(j.status==='error'){
+        clearInterval(t);el.querySelector('.st').textContent='Erro';
+        el.querySelector('.info').insertAdjacentHTML('beforeend','<div class="err"></div>');
+        el.querySelector('.err').textContent=j.error;
+      }
+    }catch{clearInterval(t)}
+  },1500);
+}
+</script>
+</body>
+</html>
